@@ -4,13 +4,13 @@
 
 Raw orders from a PostgreSQL source flow through a data lake, a DuckDB warehouse and dbt models into a Metabase dashboard, orchestrated daily by Airflow. The design follows a typical modern data platform (lake → warehouse → transformation → BI), with local tools in place of cloud services.
 
-Done: batch ingestion, data lake, warehouse, analytics engineering and the BI dashboard. Planned: batch processing with Spark and streaming with Kafka (see [ROADMAP.md](ROADMAP.md)).
+The project covers batch ingestion, a data lake, a warehouse, analytics engineering, batch processing with Spark, streaming with Kafka and a BI dashboard.
 
 ## Architecture
 
 ![Architecture](docs/images/architecture.svg)
 
-**Flow in one example:** an order lands in PostgreSQL → Airflow extracts it daily to Parquet in the lake → dlt loads it into DuckDB → dbt builds `fct_orders` → the mart is copied to a PostgreSQL serving database → Metabase shows revenue per day.
+**Flow in one example:** an order lands in PostgreSQL → Airflow's daily run copies the tables to Parquet in the lake → dlt merges them into DuckDB → dbt builds `fct_orders` → the mart is copied to a PostgreSQL serving database → Metabase shows revenue per month.
 
 > **Design note: why Metabase reads PostgreSQL, not DuckDB.**
 > DuckDB allows only one process to write to a database file. If Metabase kept the warehouse file open, the daily Airflow run (dlt + dbt) would fail with a lock error. Metabase also needs a community plugin and a custom image to read DuckDB.
@@ -41,15 +41,15 @@ Design details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 | # | Folder | Scope |
 |---|---|---|
 | M1 | [m1-infra/](m1-infra/) | Docker setup, PostgreSQL as the source system, load the dataset |
-| M2 | [m2-orchestration/](m2-orchestration/) | Airflow DAG: PostgreSQL → data lake (Parquet) |
-| M3 | [m3-ingest-warehouse/](m3-ingest-warehouse/) | dlt: data lake → DuckDB, incremental / merge loads |
+| M2 | [m2-orchestration/](m2-orchestration/) | Daily Airflow DAG: PostgreSQL tables → Parquet in the data lake, partitioned by run date |
+| M3 | [m3-ingest-warehouse/](m3-ingest-warehouse/) | dlt: data lake → DuckDB, merge (upsert) on primary keys |
 | M4 | [m4-dbt/](m4-dbt/) | dbt models, tests, docs, incremental models, snapshots |
 | M5 | [m5-bruin/](m5-bruin/) | Optional: rebuild 1–2 models with Bruin and compare with dbt |
 | M6 | [m6-spark/](m6-spark/) | PySpark batch job (e.g. customer RFM) |
-| M7 | [m7-streaming/](m7-streaming/) | Faker events → Kafka → consumer → warehouse |
+| M7 | [m7-streaming/](m7-streaming/) | Faker events → Kafka → consumer writes Parquet micro-batches to the data lake → dlt merges them into DuckDB |
 | M8 | [m8-dashboard/](m8-dashboard/) | Publish marts to a PostgreSQL serving DB + revenue and order dashboard |
 
-Build order and progress: [ROADMAP.md](ROADMAP.md). Each module folder has an `images/` folder with screenshots of its output.
+Each module folder has an `images/` folder with screenshots of its output.
 
 ## Dataset
 
@@ -185,8 +185,7 @@ de-ecommerce-pipeline/
 ├── data/              # Olist CSVs (download yourself, not committed)
 ├── docs/              # Architecture notes and diagrams
 ├── m1-infra/ … m8-dashboard/   # One folder per module
-├── LICENSE            # MIT (code)
-└── ROADMAP.md         # Module plan and status
+└── LICENSE            # MIT (code)
 ```
 
 ## License
