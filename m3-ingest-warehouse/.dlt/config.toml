@@ -1,0 +1,13 @@
+[runtime]
+log_level = "WARNING"
+dlthub_telemetry = false   # no anonymous usage stats
+
+[sources.filesystem]
+bucket_url = "s3://olist-lake"
+
+[sources.filesystem.credentials]
+endpoint_url = "http://127.0.0.1:18333"   # outside Docker, use the published port
+region_name = "us-east-1"
+
+[normalize.parquet_normalizer]
+add_dlt_load_id = true   # tag each row with its load id (used by merge tests and dbt incremental in M4)

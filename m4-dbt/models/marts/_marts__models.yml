@@ -1,0 +1,39 @@
+version: 2
+
+models:
+  - name: fct_orders
+    description: "One row per order. order_amount = item prices + freight; payment_amount = what the customer actually paid."
+    columns:
+      - name: order_id
+        data_tests: [unique, not_null]
+      - name: customer_unique_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_unique_id
+
+  - name: dim_customers
+    columns:
+      - name: customer_unique_id
+        data_tests: [unique, not_null]
+
+  - name: dim_products
+    columns:
+      - name: product_id
+        data_tests: [unique, not_null]
+      - name: category_name
+        data_tests: [not_null]
+
+  - name: dim_sellers
+    columns:
+      - name: seller_id
+        data_tests: [unique, not_null]
+  
+  - name: fct_order_items
+    description: "One row per order item. Incremental on _dlt_load_id."
+    columns:
+      - name: order_item_key
+        data_tests: [unique, not_null]
+

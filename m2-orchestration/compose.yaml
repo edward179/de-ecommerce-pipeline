@@ -1,0 +1,156 @@
+# Adapted from the official Apache Airflow docker-compose.yaml
+# (https://airflow.apache.org/docs/apache-airflow/stable/docker-compose.yaml), Apache License 2.0.
+# Shared settings for all Airflow services (YAML anchor)
+x-airflow-common: &airflow-common
+  image: de-airflow:3.3.2-dlt-dbt-pg   # custom build: dlt (M3) + dbt (M4) + DuckDB postgres extension (M8)
+  build:
+    context: .
+    additional_contexts:
+      m3: ../m3-ingest-warehouse       # lets the Dockerfile read M3 requirements.txt
+      m4: ../m4-dbt                    # lets the Dockerfile read M4 requirements.txt
+
+  user: "${AIRFLOW_UID:-50000}:0"
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__PARALLELISM: "4"
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD}@airflow-db/airflow
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET}
+    AIRFLOW__API_AUTH__JWT_ISSUER: airflow
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+    AIRFLOW__API__WORKERS: "1"
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+    AIRFLOW_CONN_OLIST_PG: '{"conn_type":"postgres","host":"de-postgres","port":5432,"login":"olist","password":"${OLIST_PG_PASSWORD}","schema":"olist"}'
+    AIRFLOW_CONN_LAKE_S3: '{"conn_type":"aws","login":"lakeadmin","password":"${LAKE_S3_SECRET}","extra":{"endpoint_url":"http://seaweedfs:8333","region_name":"us-east-1"}}'
+
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - airflow-logs:/opt/airflow/logs
+  restart: "no"
+  depends_on: &airflow-common-depends-on
+    airflow-db:
+      condition: service_healthy
+
+services:
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48
+    container_name: de-seaweedfs
+    command: >
+      server -dir=/data -ip.bind=0.0.0.0
+      -s3 -s3.config=/etc/seaweedfs/s3.json
+      -master.volumeSizeLimitMB=256
+    ports:
+      - "127.0.0.1:18333:8333"
+    volumes:
+      - seaweed-data:/data
+      - ./secrets/s3.json:/etc/seaweedfs/s3.json:ro
+    mem_limit: 512m
+    restart: "no"
+
+  airflow-db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD}
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow-db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow", "-d", "airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    mem_limit: 256m
+    restart: "no"
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/logs
+        /entrypoint airflow version
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USER}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
+    user: "0:0"
+    mem_limit: 768m
+
+  airflow-apiserver:
+    <<: *airflow-common
+    command: api-server
+    ports:
+      - "127.0.0.1:18080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    mem_limit: 768m
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    networks: [default, de-net]
+    environment:
+      <<: *airflow-common-env
+      # dlt (M3): env vars override .dlt/config.toml inside Docker
+      SOURCES__FILESYSTEM__CREDENTIALS__ENDPOINT_URL: http://seaweedfs:8333
+      SOURCES__FILESYSTEM__CREDENTIALS__AWS_ACCESS_KEY_ID: lakeadmin
+      SOURCES__FILESYSTEM__CREDENTIALS__AWS_SECRET_ACCESS_KEY: ${LAKE_S3_SECRET}
+      DO_NOT_TRACK: "1"                  # dbt (M4): telemetry off
+      DUCKDB_EXTENSION_DIR: /opt/duckdb-ext                     # M8: extension preinstalled in the image
+      SERVING_WRITER_PASSWORD: ${SERVING_WRITER_PASSWORD}       # M8: used only by publish_marts
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - airflow-logs:/opt/airflow/logs
+      - ../m3-ingest-warehouse:/opt/m3   # code + .dlt + warehouse/olist.duckdb
+      - ../m4-dbt:/opt/m4                # dbt project + profiles.yml (target airflow)
+      - ../m8-dashboard:/opt/m8          # publish_marts.py
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    mem_limit: 1536m   # tasks run inside the scheduler: ~400 MB scheduler + ~700 MB dlt
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    mem_limit: 512m
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+volumes:
+  seaweed-data:
+  airflow-db-data:
+  airflow-logs:
+
+networks:
+  de-net:
+    external: true

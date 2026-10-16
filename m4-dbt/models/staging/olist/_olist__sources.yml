@@ -1,0 +1,15 @@
+version: 2
+
+sources:
+  - name: olist
+    schema: raw_olist          # created by dlt in M3
+    description: "Olist e-commerce, loaded by dlt from the lake (M3)"
+    tables:
+      - name: customers
+      - name: sellers
+      - name: products
+      - name: orders
+      - name: order_items
+      - name: order_payments
+      - name: order_reviews
+      - name: product_category_name_translation

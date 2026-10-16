@@ -1,0 +1,24 @@
+# Personal study notes (local only)
+**/NOTES*.md
+HANDOFF.md
+CLAUDE.md
+LOG.md
+minh-adhoc-logs.txt
+# Data & secret
+data/
+*.duckdb
+*.duckdb.wal
+.env
+**/secrets/*
+!**/secrets/*.example
+*.json.key
+# Python / tool
+.venv/
+__pycache__/
+*.pyc
+dbt_packages/
+target/
+logs/
+.user.yml
+.ipynb_checkpoints/
+**/.dlt/secrets.toml

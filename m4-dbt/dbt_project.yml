@@ -1,0 +1,28 @@
+name: olist
+version: "1.0.0"
+config-version: 2
+profile: olist            # the "olist" block in profiles.yml
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+snapshot-paths: ["snapshots"]
+seed-paths: ["seeds"]
+analysis-paths: ["analyses"]
+clean-targets: ["target", "dbt_packages"]
+
+flags:
+  send_anonymous_usage_stats: false   # telemetry off (DO_NOT_TRACK=1 is the second layer)
+
+models:
+  olist:
+    staging:
+      +materialized: view     # light renaming/casting only, no storage needed
+      +schema: staging        # becomes analytics_staging
+    intermediate:
+      +materialized: view
+      +schema: intermediate
+    marts:
+      +materialized: table    # queried often by BI, so precompute
+      +schema: marts
+

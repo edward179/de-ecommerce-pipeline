@@ -1,0 +1,2 @@
+dlt[duckdb,filesystem,parquet]==1.31.0
+duckdb==1.5.6

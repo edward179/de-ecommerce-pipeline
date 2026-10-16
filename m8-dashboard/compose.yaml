@@ -1,0 +1,37 @@
+# M8: Metabase OSS, reads the serving database (M1 PostgreSQL) over de-net
+services:
+  metabase:
+    image: metabase/metabase:v0.64.2.5   # OSS LTS, pinned patch version
+    container_name: de-metabase
+    ports:
+      - "127.0.0.1:13000:3000"           # local machine only
+    environment:
+      # Metabase's own data (dashboards, users, questions) lives in the metabase DB on de-postgres, not in H2
+      MB_DB_TYPE: postgres
+      MB_DB_HOST: de-postgres
+      MB_DB_PORT: "5432"
+      MB_DB_DBNAME: metabase
+      MB_DB_USER: metabase_app
+      MB_DB_PASS: ${METABASE_DB_PASSWORD}
+      # Privacy: no usage tracking, no update checks, no public sharing links
+      MB_ANON_TRACKING_ENABLED: "false"
+      MB_CHECK_FOR_UPDATES: "false"
+      MB_ENABLE_PUBLIC_SHARING: "false"
+      # Encrypts saved DB connections + signs sessions. Losing the key = losing saved connections, so back up .env
+      MB_ENCRYPTION_SECRET_KEY: ${MB_ENCRYPTION_SECRET_KEY}
+      MB_SESSION_SECRET_KEY: ${MB_SESSION_SECRET_KEY}
+      JAVA_TIMEZONE: UTC                 # data is in UTC, same as dbt
+      JAVA_OPTS: "-Xmx1g"                # Java heap cap, below mem_limit
+    mem_limit: 1536m
+    restart: "no"
+    networks: [de-net]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      start_period: 120s
+
+networks:
+  de-net:
+    external: true
