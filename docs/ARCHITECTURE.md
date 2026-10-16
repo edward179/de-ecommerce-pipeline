@@ -8,9 +8,9 @@ For a short overview, see the [README](../README.md).
 ```mermaid
 flowchart LR
   CSV["Olist CSV"] -->|"one-time load"| PG[("PostgreSQL<br/>OLTP")]
-  PG -->|"daily extract<br/>(Airflow)"| LAKE[("SeaweedFS<br/>raw Parquet")]
-  LAKE -->|"dlt<br/>incremental / merge"| RAW[("DuckDB<br/>raw schema")]
-  FK["Faker"] --> KF[["Kafka topic"]] -->|"consumer"| RAW
+  PG -->|"daily snapshot<br/>(Airflow)"| LAKE[("SeaweedFS<br/>raw Parquet")]
+  LAKE -->|"dlt<br/>merge on primary keys"| RAW[("DuckDB<br/>raw_olist")]
+  FK["Faker"] --> KF[["Kafka topic"]] -->|"consumer<br/>Parquet micro-batches"| LAKE
   RAW -->|"dbt"| STG["staging"] --> INT["intermediate"] --> MART[("marts")]
   RAW <-->|"PySpark"| SPARK["batch jobs<br/>(e.g. RFM)"]
   MART -->|"publish<br/>(Airflow)"| SRV[("PostgreSQL<br/>serving DB")] --> MB["Metabase"]
@@ -18,12 +18,12 @@ flowchart LR
 
 | Step | From → To | Tool | What happens |
 |---|---|---|---|
-| 1 | CSV → PostgreSQL | SQL / Python | Load the Olist tables once. PostgreSQL acts as the "production" source system. |
-| 2 | PostgreSQL → data lake | Airflow DAG | Extract each table by day and write Parquet files to the S3 bucket. Replaying the dataset day by day simulates a daily load. |
-| 3 | Data lake → warehouse | dlt | Load Parquet into DuckDB `raw` tables with incremental / merge loads, so re-runs do not create duplicates. |
-| 4 | Warehouse → marts | dbt | Clean and model the data: `staging` (rename, cast), `intermediate` (joins), `marts` (facts and dimensions). Includes tests, docs and snapshots. |
+| 1 | CSV → PostgreSQL | SQL (`COPY`) | Load 8 Olist tables once, on the first container start. PostgreSQL acts as the "production" source system. |
+| 2 | PostgreSQL → data lake | Airflow DAG | Every daily run copies each full table to one Parquet file in the S3 bucket, under a `dt=<run date>` partition, then checks that row counts match. |
+| 3 | Data lake → warehouse | dlt | Load the run's partition into DuckDB `raw_olist` and merge (upsert) on primary keys, so re-runs do not create duplicates. |
+| 4 | Warehouse → marts | dbt | Clean and model the data: `staging` (rename, cast, fix time zones), `intermediate` (aggregate items, payments and reviews to one row per order), `marts` (facts and dimensions). Includes tests, docs, an incremental model and a snapshot. |
 | 5 | Warehouse ↔ Spark | PySpark | Batch jobs that read from and write back to the warehouse, e.g. customer RFM segmentation. |
-| 6 | Events → warehouse | Kafka + consumer | Faker produces about 5 order events per second. A consumer writes them to DuckDB. The producer stops after N minutes. |
+| 6 | Events → data lake → warehouse | Kafka + consumer, dlt | Faker produces about 5 order events per second and stops after N minutes. A consumer writes the events to the lake as Parquet micro-batches (every 30–60 seconds) and commits Kafka offsets only after each file is written. dlt then merges the event files into DuckDB on `event_id`, so events read twice are not duplicated. |
 | 7 | Marts → serving DB | Airflow task | After dbt finishes, copy the mart tables from DuckDB to a separate PostgreSQL `serving` database. See [section 6](#6-design-decision-serving-layer-for-bi). |
 | 8 | Serving DB → dashboard | Metabase | Revenue and order dashboards on top of the served marts. |
 
@@ -31,13 +31,14 @@ flowchart LR
 
 | Layer | Location | Example | Purpose |
 |---|---|---|---|
-| Source | PostgreSQL | `orders`, `order_items` | Simulates the application database |
-| Lake | SeaweedFS bucket | `orders/dt=2017-01-05/*.parquet` | Immutable raw files, partitioned by date |
-| Raw | DuckDB `raw` schema | `raw.orders` | Data as loaded, no business logic |
-| Staging | DuckDB `staging` | `stg_orders` | One model per source table: types, names, light cleaning |
-| Intermediate | DuckDB `intermediate` | `int_order_items_enriched` | Joins and reusable logic |
-| Marts | DuckDB `marts` | `fct_orders`, `dim_customers` | Final business tables |
-| Serving | PostgreSQL `serving` database | `fct_orders` (copy) | Read-only copy of the marts for BI tools |
+| Source | PostgreSQL `olist` schema | `olist.orders`, `olist.order_items` | Simulates the application database |
+| Lake | SeaweedFS bucket `olist-lake` | `olist/orders/dt=2026-10-08/orders.parquet` | Raw files, one partition per run date |
+| Raw | DuckDB `raw_olist` | `raw_olist.orders` | Data as loaded by dlt, no business logic |
+| Staging | DuckDB `analytics_staging` (views) | `stg_olist__orders` | One model per source table: types, names, light cleaning |
+| Intermediate | DuckDB `analytics_intermediate` (views) | `int_order_items_aggregated_to_orders` | Aggregate child tables to one row per order, to avoid fan-out in joins |
+| Marts | DuckDB `analytics_marts` (tables) | `fct_orders`, `fct_order_items`, `dim_customers` | Final business tables |
+| Snapshots | DuckDB `analytics_snapshots` | `snp_olist__sellers` | History of seller changes (SCD type 2) |
+| Serving | PostgreSQL `serving` database, `marts` schema | `marts.fct_orders` (copy) | Read-only copy of the marts for BI tools |
 
 ## 3. Tool choices
 
@@ -46,7 +47,7 @@ flowchart LR
 | Containers | Docker Engine in WSL2 | Free for commercial use. Docker Desktop needs a paid license in large companies. |
 | Orchestration | Airflow 3 (LocalExecutor) | Most common orchestrator in job postings. LocalExecutor avoids running Celery and Redis on a laptop. |
 | Data lake | SeaweedFS | S3-compatible and Apache 2.0. MinIO's community repo was archived in 2026. |
-| Ingestion | dlt | Handles schema inference and incremental loads in a few lines of Python. |
+| Ingestion | dlt | Handles schema inference and merge loads in a few lines of Python. |
 | Warehouse | DuckDB | Runs in-process with no server and is fast enough for about 100k orders. Replaces BigQuery at $0. |
 | Transformation | dbt Core | Industry standard for SQL modeling, testing and documentation. |
 | Streaming | Apache Kafka (KRaft) | KRaft removes ZooKeeper, so there is one less container. Uses only the Apache images, not Confluent's commercial ones. |
@@ -67,11 +68,11 @@ All services run in Docker on one laptop. Every service is bound to `127.0.0.1`,
 | SeaweedFS S3 | 18333 |
 
 The ports are offset from the defaults to avoid clashes with other local services.
-Services are grouped with Docker Compose profiles, so each module starts only what it needs. The total resource budget for WSL2 is 4 GB of RAM and 4 CPUs.
+Each module that runs services has its own Compose file (`m1-infra`, `m2-orchestration`, `m8-dashboard`), joined by a shared external network `de-net`, so each module starts only what it needs. The total resource budget for WSL2 is 4 GB of RAM and 4 CPUs.
 
 ## 5. Known risks
 
-- **DuckDB has a single writer.** Only one process can hold a write connection to the `.duckdb` file. Inside the Airflow DAG, dlt, dbt and the publish task run one after another, so they never compete. For BI, see the decision in section 6. For the Kafka consumer (M7), the options are still to be evaluated, for example writing to a separate file.
+- **DuckDB has a single writer.** Only one process can hold a write connection to the `.duckdb` file. Inside the Airflow DAG, dlt, dbt and the publish task run one after another, so they never compete. For BI, see the decision in section 6. The Kafka consumer never opens DuckDB: it writes Parquet files to the lake, and dlt loads them like the batch data.
 - **Memory.** Airflow, Kafka and Spark together can go over 4 GB. Start only the services of the current module.
 
 ## 6. Design decision: serving layer for BI
