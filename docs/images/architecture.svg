@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2160 950" width="2160" height="950" font-family="Ubuntu, 'Segoe UI', Arial, sans-serif" role="img" aria-labelledby="title desc">
-  <title id="title">de-ecommerce-pipeline architecture</title>
+  <title id="title">Olist Commerce Data Platform architecture</title>
   <desc id="desc">PostgreSQL source, Airflow extract to a SeaweedFS data lake, dlt load into DuckDB, dbt and PySpark on the warehouse, marts published to a PostgreSQL serving database for Metabase, Kafka streaming, optional Bruin.</desc>
   <!-- Tool logos: Simple Icons v16.35.0 (https://simpleicons.org), CC0-1.0. Trademarks belong to their owners. -->
   <defs>

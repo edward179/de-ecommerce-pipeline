@@ -1,9 +1,10 @@
-# de-ecommerce-pipeline
+# Olist Commerce Data Platform
 
-An end-to-end data engineering project on e-commerce data, built **locally with free, open-source tools**.
-It follows a typical modern data platform design (data lake → warehouse → transformation → BI) and runs it locally instead of on cloud services.
+**An end-to-end e-commerce data platform, built on a laptop with free, open-source tools.**
 
-The project covers batch ingestion, a data lake, a warehouse, analytics engineering, batch processing with Spark, streaming with Kafka, and a BI dashboard.
+Raw orders from a PostgreSQL source flow through a data lake, a DuckDB warehouse and dbt models into a Metabase dashboard, orchestrated daily by Airflow. The design follows a typical modern data platform (lake → warehouse → transformation → BI), with local tools in place of cloud services.
+
+Done: batch ingestion, data lake, warehouse, analytics engineering and the BI dashboard. Planned: batch processing with Spark and streaming with Kafka (see [ROADMAP.md](ROADMAP.md)).
 
 ## Architecture
 
