@@ -62,7 +62,7 @@ The CSV files are **not committed** to this repo. To run the project, download t
 
 | Airflow DAG (daily) | dbt lineage |
 |---|---|
-| ![Airflow DAG](m4-dbt/images/dag-with-dbt.png) | ![dbt lineage](m4-dbt/images/lineage.png) |
+| ![Airflow DAG](m2-orchestration/images/dag-full-pipeline.png) | ![dbt lineage](m4-dbt/images/lineage.png) |
 
 Metabase dashboard on the served marts:
 
