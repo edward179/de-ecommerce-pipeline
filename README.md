@@ -34,7 +34,6 @@ Design details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 | Streaming | Apache Kafka (KRaft) + Kafbat UI |
 | Serving DB for BI | PostgreSQL (separate `serving` database) |
 | Dashboard | Metabase OSS |
-| Data platform (optional) | Bruin CLI |
 
 ## Modules
 
@@ -44,7 +43,6 @@ Design details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 | M2 | [m2-orchestration/](m2-orchestration/) | Daily Airflow DAG: PostgreSQL tables → Parquet in the data lake, partitioned by run date |
 | M3 | [m3-ingest-warehouse/](m3-ingest-warehouse/) | dlt: data lake → DuckDB, merge (upsert) on primary keys |
 | M4 | [m4-dbt/](m4-dbt/) | dbt models, tests, docs, incremental models, snapshots |
-| M5 | [m5-bruin/](m5-bruin/) | Optional: rebuild 1–2 models with Bruin and compare with dbt |
 | M6 | [m6-spark/](m6-spark/) | PySpark batch job (e.g. customer RFM) |
 | M7 | [m7-streaming/](m7-streaming/) | Faker events → Kafka → consumer writes Parquet micro-batches to the data lake → dlt merges them into DuckDB |
 | M8 | [m8-dashboard/](m8-dashboard/) | Publish marts to a PostgreSQL serving DB + revenue and order dashboard |
