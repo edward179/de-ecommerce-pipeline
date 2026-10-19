@@ -1,0 +1,4 @@
+confluent-kafka==2.16.0
+Faker==40.43.0
+psycopg[binary]==3.3.6
+pyarrow==26.0.0

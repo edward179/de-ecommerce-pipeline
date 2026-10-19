@@ -1,0 +1,64 @@
+# M7: single-node Kafka (KRaft) + Kafbat UI for local streaming
+services:
+  kafka:
+    image: apache/kafka:4.3.1            # Apache image only, pinned stable version
+    container_name: de-kafka
+    ports:
+      - "127.0.0.1:19092:19092"          # for producer/consumer running in WSL
+    environment:
+      # One process is both broker and controller (KRaft, no ZooKeeper)
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      # PLAINTEXT = other containers on de-net, EXTERNAL = WSL host
+      KAFKA_LISTENERS: PLAINTEXT://:9092,EXTERNAL://:19092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://de-kafka:9092,EXTERNAL://127.0.0.1:19092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # Single broker: internal topics cannot have more than 1 replica
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # Topics are created explicitly, not by a typo in a client
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_HEAP_OPTS: "-Xms512m -Xmx512m"   # Java heap cap, below mem_limit
+    volumes:
+      - kafka-data:/var/lib/kafka/data   # keeps topics + consumer offsets between sessions
+    mem_limit: 768m
+    restart: "no"
+    networks: [de-net]
+    healthcheck:
+      # TCP check only; kafka-*.sh tools start a JVM and cost ~200 MB each run
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/9092' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  kafka-ui:
+    image: kafbat/kafka-ui:v1.5.0        # pinned release, not the moving "main" tag
+    container_name: de-kafka-ui
+    ports:
+      - "127.0.0.1:18081:8080"           # local machine only, no login
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: de-kafka:9092
+      DYNAMIC_CONFIG_ENABLED: "false"    # config only from this file
+      JAVA_OPTS: "-Xmx256m"
+    mem_limit: 512m
+    restart: "no"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks: [de-net]
+
+volumes:
+  kafka-data:
+
+networks:
+  de-net:
+    external: true
