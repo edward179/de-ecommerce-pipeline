@@ -14,8 +14,9 @@ TABLES = ["fct_orders", "fct_order_items", "dim_customers", "dim_products", "dim
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--duckdb", required=True, help="path to olist.duckdb")
+    parser.add_argument("--tables", nargs="+", default=TABLES,
+                        help="marts to copy (default: the tables built by the daily DAG)")
     args = parser.parse_args()
-
     # In-memory DuckDB used only as a bridge. In Airflow the extension is preinstalled in the image
     # (DUCKDB_EXTENSION_DIR); a manual run uses the default ~/.duckdb
     ext_dir = os.environ.get("DUCKDB_EXTENSION_DIR")
@@ -27,13 +28,13 @@ def main() -> None:
 
     # One transaction: on failure PostgreSQL keeps the old tables, so the dashboard never sees empty ones
     con.execute("BEGIN")
-    for t in TABLES:
+    for t in args.tables:
         con.execute(f"DROP TABLE IF EXISTS pg.marts.{t}")
         con.execute(f"CREATE TABLE pg.marts.{t} AS SELECT * FROM wh.analytics_marts.{t}")
     con.execute("COMMIT")
 
     mismatched = []
-    for t in TABLES:
+    for t in args.tables:
         src = con.execute(f"SELECT count(*) FROM wh.analytics_marts.{t}").fetchone()[0]
         dst = con.execute(f"SELECT count(*) FROM pg.marts.{t}").fetchone()[0]
         status = "OK" if src == dst else "MISMATCH"

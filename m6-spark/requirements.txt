@@ -1,0 +1,4 @@
+# M6: batch job with PySpark in local mode
+pyspark==4.2.0
+# Same version as the warehouse file written by M3/M4
+duckdb==1.5.6

@@ -1,0 +1,10 @@
+version: 2
+
+sources:
+  - name: spark
+    description: "Parquet written by the M6 PySpark job (m6-spark/rfm_job.py)"
+    meta:
+      # Path is relative to m4-dbt, where dbt runs by hand
+      external_location: "read_parquet('../m6-spark/data/out/{name}/*.parquet')"
+    tables:
+      - name: customer_rfm

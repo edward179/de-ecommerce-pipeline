@@ -30,7 +30,7 @@ Design details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 | Ingestion | dlt |
 | Warehouse | DuckDB |
 | Transformation | dbt Core + dbt-duckdb |
-| Batch processing | PySpark (local mode) |
+| Batch processing | PySpark (local mode) on OpenJDK 21 |
 | Streaming | Apache Kafka (KRaft) + Kafbat UI |
 | Serving DB for BI | PostgreSQL (separate `serving` database) |
 | Dashboard | Metabase OSS |
@@ -42,10 +42,10 @@ Design details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 | M1 | [m1-infra/](m1-infra/) | Docker setup, PostgreSQL as the source system, load the dataset |
 | M2 | [m2-orchestration/](m2-orchestration/) | Daily Airflow DAG: PostgreSQL tables → Parquet in the data lake, partitioned by run date |
 | M3 | [m3-ingest-warehouse/](m3-ingest-warehouse/) | dlt: data lake → DuckDB, merge (upsert) on primary keys |
-| M4 | [m4-dbt/](m4-dbt/) | dbt models, tests, docs, incremental models, snapshots |
-| M6 | [m6-spark/](m6-spark/) | PySpark batch job (e.g. customer RFM) |
+| M4 | [m4-dbt/](m4-dbt/) | dbt models, tests, docs, an incremental model, a snapshot |
+| M6 | [m6-spark/](m6-spark/) | PySpark job: customer RFM segments from the order mart (Parquet in, Parquet out), loaded and tested by dbt |
 | M7 | [m7-streaming/](m7-streaming/) | Faker events → Kafka → consumer writes Parquet micro-batches to the data lake → dlt merges them into DuckDB |
-| M8 | [m8-dashboard/](m8-dashboard/) | Publish marts to a PostgreSQL serving DB + revenue and order dashboard |
+| M8 | [m8-dashboard/](m8-dashboard/) | Publish marts to a PostgreSQL serving DB + revenue and order dashboard, and an RFM segment dashboard |
 
 Each module folder has an `images/` folder with screenshots of its output.
 
@@ -65,6 +65,10 @@ The CSV files are **not committed** to this repo. To run the project, download t
 Metabase dashboard on the served marts:
 
 ![Metabase dashboard](m8-dashboard/images/dashboard.png)
+
+Customer RFM segments computed by the PySpark job:
+
+![RFM segments](m6-spark/images/rfm-segments.png)
 
 More screenshots are in each module's `images/` folder.
 
@@ -154,7 +158,7 @@ docker compose logs -f metabase | grep -m1 -E "Initialization (COMPLETE|FAILED)"
 
 Open http://127.0.0.1:13000, create a local admin account, then add a database: PostgreSQL, host `de-postgres`, port `5432`, database `serving`, user `bi_reader`, password `BI_READER_PASSWORD` from `m8-dashboard/.env`, schema `marts`. The dashboard itself lives in Metabase's own database and is not exported to this repo.
 
-### Run M3 / M4 by hand (optional)
+### 6. Run M3 / M4 by hand (optional)
 
 ```bash
 cd m3-ingest-warehouse
@@ -168,9 +172,32 @@ DO_NOT_TRACK=1 dbt build --profiles-dir .
 
 Do not open the DuckDB file by hand while the DAG is running: DuckDB allows only one writer.
 
-### 6. M7: streaming (optional)
+### 7. M6: Spark RFM (optional)
 
-Needs M1 running and the M3 / M4 virtual environments from the step above. Stop Airflow first: Kafka needs the memory, and the event load writes to the same DuckDB file as the DAG.
+Needs the warehouse built by the DAG (step 4) and the M4 virtual environment (step 6). No containers are needed for the Spark job itself.
+
+```bash
+sudo apt install -y openjdk-21-jre-headless   # Java runtime for Spark
+cd m6-spark
+python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
+python rfm_job.py                 # exports fct_orders read-only, writes data/out/customer_rfm/
+deactivate && cd ../m4-dbt && source .venv/bin/activate
+DO_NOT_TRACK=1 dbt build --profiles-dir . --select customer_rfm
+```
+
+While the job runs, the Spark UI is at http://127.0.0.1:14040. To show the segments in Metabase, start M1 and copy the table to the serving database:
+
+```bash
+cd ../m8-dashboard
+export PGHOST=127.0.0.1 PGPORT=15432 PGDATABASE=serving PGUSER=serving_writer
+export PGPASSWORD=$(grep '^SERVING_WRITER_PASSWORD=' .env | cut -d= -f2)
+python publish_marts.py --duckdb ../m3-ingest-warehouse/warehouse/olist.duckdb --tables customer_rfm
+unset PGPASSWORD
+```
+
+### 8. M7: streaming (optional)
+
+Needs M1 running and the M3 / M4 virtual environments (step 6). Stop Airflow first: Kafka needs the memory, and the event load writes to the same DuckDB file as the DAG.
 
 ```bash
 (cd m2-orchestration && docker compose down && docker compose up -d seaweedfs)

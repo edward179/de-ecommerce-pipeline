@@ -110,7 +110,8 @@
   <text class="pt" x="1430" y="554">Module 6: Batch Processing</text>
   <rect class="chip" x="1320" y="585" width="220" height="80"/>
   <use href="#i-spark" x="1348" y="602" width="46" height="46" fill="#E25A1C"/>
-  <text class="toolL" x="1406" y="634">PySpark</text>
+  <text class="toolL" x="1406" y="622">PySpark</text>
+  <text class="subL" x="1406" y="650">customer RFM</text>
 
   <line class="arr" x1="1670" y1="400" x2="1728" y2="400"/>
 
@@ -127,5 +128,5 @@
   <rect class="chip" x="1795" y="485" width="260" height="85"/>
   <use href="#i-metabase" x="1810" y="506" width="42" height="42" fill="#509EE3"/>
   <text class="toolL" x="1864" y="522">Metabase</text>
-  <text class="subL" x="1864" y="550">revenue dashboard</text>
+  <text class="subL" x="1864" y="550">revenue · RFM</text>
 </svg>
