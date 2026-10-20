@@ -1,0 +1,36 @@
+version: 2
+
+models:
+  - name: customer_rfm
+    columns:
+      - name: customer_unique_id
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_unique_id
+      - name: segment
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [Champions, Loyal, Promising, New, At risk, Lost]
+      - name: r_score
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4, 5]
+                quote: false
+      - name: f_score
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3]
+                quote: false
+      - name: m_score
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4, 5]
+                quote: false
