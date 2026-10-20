@@ -17,6 +17,7 @@ def main() -> None:
     parser.add_argument("--tables", nargs="+", default=TABLES,
                         help="marts to copy (default: the tables built by the daily DAG)")
     args = parser.parse_args()
+
     # In-memory DuckDB used only as a bridge. In Airflow the extension is preinstalled in the image
     # (DUCKDB_EXTENSION_DIR); a manual run uses the default ~/.duckdb
     ext_dir = os.environ.get("DUCKDB_EXTENSION_DIR")
