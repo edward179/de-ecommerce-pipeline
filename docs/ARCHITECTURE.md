@@ -11,7 +11,9 @@ flowchart LR
   PG -->|"daily snapshot<br/>(Airflow)"| LAKE[("SeaweedFS<br/>raw Parquet")]
   LAKE -->|"dlt<br/>merge on primary keys"| RAW[("DuckDB<br/>raw_olist")]
   FK["Faker"] --> KF[["Kafka topic"]] -->|"consumer<br/>Parquet micro-batches"| LAKE
+  LAKE -->|"dlt<br/>merge on event_id"| EVT[("DuckDB<br/>raw_events")]
   RAW -->|"dbt"| STG["staging"] --> INT["intermediate"] --> MART[("marts")]
+  EVT -->|"dbt"| STG
   RAW <-->|"PySpark"| SPARK["batch jobs<br/>(e.g. RFM)"]
   MART -->|"publish<br/>(Airflow)"| SRV[("PostgreSQL<br/>serving DB")] --> MB["Metabase"]
 ```
@@ -23,7 +25,7 @@ flowchart LR
 | 3 | Data lake → warehouse | dlt | Load the run's partition into DuckDB `raw_olist` and merge (upsert) on primary keys, so re-runs do not create duplicates. |
 | 4 | Warehouse → marts | dbt | Clean and model the data: `staging` (rename, cast, fix time zones), `intermediate` (aggregate items, payments and reviews to one row per order), `marts` (facts and dimensions). Includes tests, docs, an incremental model and a snapshot. |
 | 5 | Warehouse ↔ Spark | PySpark | Batch jobs that read from and write back to the warehouse, e.g. customer RFM segmentation. |
-| 6 | Events → data lake → warehouse | Kafka + consumer, dlt | Faker produces about 5 order events per second and stops after N minutes. A consumer writes the events to the lake as Parquet micro-batches (every 30–60 seconds) and commits Kafka offsets only after each file is written. dlt then merges the event files into DuckDB on `event_id`, so events read twice are not duplicated. |
+| 6 | Events → data lake → warehouse | Kafka + consumer, dlt | Faker produces about 5 order events per second with real Olist customer and product IDs, and stops after N minutes. A consumer writes the events to the lake as Parquet micro-batches (every 60 seconds or 5,000 events) and commits Kafka offsets only after the files are written. dlt then reads only the files added since its last run and merges them into DuckDB `raw_events` on `event_id`, so events read twice are not duplicated. dbt cleans them in `stg_events__order_events`. The event load runs by hand, not in the daily DAG. |
 | 7 | Marts → serving DB | Airflow task | After dbt finishes, copy the mart tables from DuckDB to a separate PostgreSQL `serving` database. See [section 6](#6-design-decision-serving-layer-for-bi). |
 | 8 | Serving DB → dashboard | Metabase | Revenue and order dashboards on top of the served marts. |
 
@@ -33,8 +35,10 @@ flowchart LR
 |---|---|---|---|
 | Source | PostgreSQL `olist` schema | `olist.orders`, `olist.order_items` | Simulates the application database |
 | Lake | SeaweedFS bucket `olist-lake` | `olist/orders/dt=2026-10-08/orders.parquet` | Raw files, one partition per run date |
+| Lake (events) | SeaweedFS bucket `olist-lake` | `events/order_events/dt=2026-10-19/batch-<time>-<id>.parquet` | One file per consumer flush, partitioned by event date |
 | Raw | DuckDB `raw_olist` | `raw_olist.orders` | Data as loaded by dlt, no business logic |
-| Staging | DuckDB `analytics_staging` (views) | `stg_olist__orders` | One model per source table: types, names, light cleaning |
+| Raw (events) | DuckDB `raw_events` | `raw_events.order_events` | Events as loaded by dlt, one row per `event_id` |
+| Staging | DuckDB `analytics_staging` (views) | `stg_olist__orders`, `stg_events__order_events` | One model per source table: types, names, light cleaning |
 | Intermediate | DuckDB `analytics_intermediate` (views) | `int_order_items_aggregated_to_orders` | Aggregate child tables to one row per order, to avoid fan-out in joins |
 | Marts | DuckDB `analytics_marts` (tables) | `fct_orders`, `fct_order_items`, `dim_customers` | Final business tables |
 | Snapshots | DuckDB `analytics_snapshots` | `snp_olist__sellers` | History of seller changes (SCD type 2) |
@@ -68,11 +72,13 @@ All services run in Docker on one laptop. Every service is bound to `127.0.0.1`,
 | SeaweedFS S3 | 18333 |
 
 The ports are offset from the defaults to avoid clashes with other local services.
-Each module that runs services has its own Compose file (`m1-infra`, `m2-orchestration`, `m8-dashboard`), joined by a shared external network `de-net`, so each module starts only what it needs. The total resource budget for WSL2 is 4 GB of RAM and 4 CPUs.
+Each module that runs services has its own Compose file (`m1-infra`, `m2-orchestration`, `m7-streaming`, `m8-dashboard`), joined by a shared external network `de-net`, so each module starts only what it needs. The total resource budget for WSL2 is 4 GB of RAM and 4 CPUs.
 
 ## 5. Known risks
 
-- **DuckDB has a single writer.** Only one process can hold a write connection to the `.duckdb` file. Inside the Airflow DAG, dlt, dbt and the publish task run one after another, so they never compete. For BI, see the decision in section 6. The Kafka consumer never opens DuckDB: it writes Parquet files to the lake, and dlt loads them like the batch data.
+- **DuckDB has a single writer.** Only one process can hold a write connection to the `.duckdb` file. Inside the Airflow DAG, dlt, dbt and the publish task run one after another, so they never compete. For BI, see the decision in section 6. The Kafka consumer never opens DuckDB: it writes Parquet files to the lake, and dlt loads them like the batch data. The event load (`events_to_duckdb.py`) runs by hand, so it must not run while the DAG is running.
+- **At-least-once delivery.** If the consumer stops after writing a file but before committing offsets, the same events are written again. The merge on `event_id` keeps one row per event, and a dbt `unique` test checks it.
+- **Small files.** At about 5 events per second, each flush writes about 300 events. This is fine for learning; a real setup would flush less often or compact the files.
 - **Memory.** Airflow, Kafka and Spark together can go over 4 GB. Start only the services of the current module.
 
 ## 6. Design decision: serving layer for BI

@@ -1,0 +1,29 @@
+version: 2
+
+models:
+  - name: stg_events__order_events
+    columns:
+      - name: event_id
+        data_tests: [unique, not_null]
+      - name: event_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [order_created, order_payment_approved, order_shipped, order_delivered, order_canceled]
+      - name: customer_unique_id
+        data_tests:
+          - relationships:     # the producer samples real Olist customers
+              arguments:
+                to: ref('stg_olist__customers')
+                field: customer_unique_id
+      - name: product_id
+        data_tests:
+          - relationships:     # the producer samples real Olist products
+              arguments:
+                to: ref('stg_olist__products')
+                field: product_id
+      - name: payment_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [credit_card, boleto, voucher, debit_card]

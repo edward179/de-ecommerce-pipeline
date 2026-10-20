@@ -121,7 +121,7 @@ Keep `MB_ENCRYPTION_SECRET_KEY` fixed. Metabase encrypts saved connections with 
 cd m2-orchestration
 LAKE_SECRET=$(openssl rand -hex 16)
 cp secrets/s3.json.example secrets/s3.json
-sed -i "s/change_me/$LAKE_SECRET/" secrets/s3.json
+sed -i "/lakeadmin/s/change_me/$LAKE_SECRET/" secrets/s3.json   # admin user only; M7 sets its own
 cp .env.example .env
 sed -i \
   -e "s/^AIRFLOW_UID=.*/AIRFLOW_UID=$(id -u)/" \
@@ -168,10 +168,50 @@ DO_NOT_TRACK=1 dbt build --profiles-dir .
 
 Do not open the DuckDB file by hand while the DAG is running: DuckDB allows only one writer.
 
+### 6. M7: streaming (optional)
+
+Needs M1 running and the M3 / M4 virtual environments from the step above. Stop Airflow first: Kafka needs the memory, and the event load writes to the same DuckDB file as the DAG.
+
+```bash
+(cd m2-orchestration && docker compose down && docker compose up -d seaweedfs)
+cd m7-streaming
+EVENT_SECRET=$(openssl rand -hex 20)
+sed -i "/eventwriter/s/change_me/$EVENT_SECRET/" ../m2-orchestration/secrets/s3.json
+(cd ../m2-orchestration && docker compose restart seaweedfs)   # SeaweedFS reads s3.json only at start
+cp .env.example .env
+sed -i \
+  -e "s/^PGPASSWORD=.*/PGPASSWORD=$(openssl rand -hex 16)/" \
+  -e "s/^LAKE_SECRET_KEY=.*/LAKE_SECRET_KEY=$EVENT_SECRET/" \
+  .env
+set -a; source .env; set +a
+docker exec -i de-postgres psql -U olist -d olist -v ON_ERROR_STOP=1 \
+  -v producer_pw="$PGPASSWORD" < sql/01_event_producer.sql   # read-only user for the producer
+docker compose up -d
+docker exec de-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 \
+  --create --topic olist.order_events --partitions 3 --replication-factor 1
+python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
+```
+
+Run the consumer and the producer in two terminals (each in `m7-streaming`, with the venv active and `.env` loaded as above):
+
+```bash
+python consumer.py --minutes 3    # writes one Parquet file to the lake about every 60 seconds
+python producer.py --minutes 2    # about 5 order events per second
+```
+
+Kafbat UI shows the topic and messages at http://127.0.0.1:18081. Then load the event files into DuckDB and build the staging model:
+
+```bash
+deactivate && cd ../m3-ingest-warehouse && source .venv/bin/activate
+python events_to_duckdb.py        # reads only new files, merges on event_id
+deactivate && cd ../m4-dbt && source .venv/bin/activate
+DO_NOT_TRACK=1 dbt build --profiles-dir . --select stg_events__order_events
+```
+
 ### Stop
 
 ```bash
-(cd m8-dashboard && docker compose down); (cd m2-orchestration && docker compose down); (cd m1-infra && docker compose down)
+(cd m7-streaming && docker compose down); (cd m8-dashboard && docker compose down); (cd m2-orchestration && docker compose down); (cd m1-infra && docker compose down)
 ```
 
 `docker compose down` keeps the data volumes. Add `-v` to delete them.

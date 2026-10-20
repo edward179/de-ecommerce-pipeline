@@ -1,0 +1,8 @@
+version: 2
+
+sources:
+  - name: events
+    schema: raw_events         # created by dlt (m3-ingest-warehouse/events_to_duckdb.py)
+    description: "Order events from Kafka, written to the lake by the M7 consumer"
+    tables:
+      - name: order_events
